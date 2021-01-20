@@ -1,10 +1,11 @@
-import { Buffer, Neovim } from '@chemzqm/neovim'
+import { Buffer, Neovim, Window, VimValue } from '@chemzqm/neovim'
 import debounce from 'debounce'
 import { Diagnostic, DiagnosticSeverity, DiagnosticTag, Position, Range } from 'vscode-languageserver-protocol'
 import { BufferSyncItem, DiagnosticConfig, LocationListItem } from '../types'
 import { equals } from '../util/object'
 import { lineInRange, positionInRange } from '../util/position'
 import { getLocationListItem, getNameFromSeverity, getSeverityType } from './util'
+
 const isVim = process.env.VIM_NODE_RPC == '1'
 const logger = require('../util/logger')('diagnostic-buffer')
 const signGroup = 'CocDiagnostic'
@@ -208,8 +209,98 @@ export class DiagnosticBuffer implements BufferSyncItem {
     this.nvim.call('coc#util#set_buf_var', [this.bufnr, 'coc_diagnostic_info', info], true)
     this.nvim.call('coc#util#do_autocmd', ['CocDiagnosticChange'], true)
   }
-
   public showVirtualText(diagnostics: ReadonlyArray<Diagnostic>, lnum: number): void {
+    let { buffer, config } = this
+    if (!config.virtualText) return
+    let srcId = this.config.virtualTextSrcId
+    // let prefix = this.config.virtualTextPrefix
+    if (this.config.virtualTextCurrentLineOnly) {
+      diagnostics = diagnostics.filter(d => {
+        let { start, end } = d.range
+        return start.line <= lnum - 1 && end.line >= lnum - 1
+      })
+    }
+    buffer.clearNamespace(srcId)
+    for (let diagnostic of diagnostics) {
+      let { line } = diagnostic.range.start
+      let highlight = getNameFromSeverity(diagnostic.severity) + 'VirtualText'
+      let msg = diagnostic.message.split(/\n/)
+        .map((l: string) => l.trim())
+        .filter((l: string) => l.length > 0)
+        .slice(0, this.config.virtualTextLines)
+        .join(this.config.virtualTextLineSeparator)
+
+      // Promise.all([this.nvim.window, buffer.lines]).then((values: [Window, string[]]) => {
+      this.nvim.window.then((window: Window) => {
+        // let window = values[0];
+        // let lines = values[1];
+
+        let textWidth = buffer.getOption("textwidth");
+        let width = window.width;
+        // let promise = Promise.all([width, textWidth,lines]);
+        let promise = Promise.all([width, textWidth]);
+        return promise;
+      // }).then((value: [number, VimValue, string[]]) => {
+      }).then((value: [number, VimValue]) => {
+        let width = value[0];
+        let textWidth = value[1].valueOf();
+        // let lineWidths = value[2].map((value: string) => { return value.length; });
+        let tw: number = 80;
+
+        switch (typeof(textWidth)) {
+          case "number":
+            tw = textWidth;
+            break;
+          case "object":
+            break;
+        }
+
+        var maximumMessageWidth: number = 0
+
+        if (width < (tw + 20)) {
+          maximumMessageWidth = 20;
+        } else if (width < (tw + 50)) {
+          maximumMessageWidth = 20 + (width - (tw + 20)) / 1.1;
+        } else if (width < (tw + 80)) {
+          maximumMessageWidth = 20 + 26 + (width - (tw + 50)) / 1.2;
+        } else {
+          maximumMessageWidth = 20 + 26 + 24 + (width - (tw + 80)) / 1.3;
+        }
+        /* up to this point it was the code already present in src/diagnostic/buffer.ts, follows my hack */
+        let splitBySpaces = msg.split(/\s+/)
+        let lines = []
+        let l = ''
+        for (const word of splitBySpaces) {
+          if (word.length + l.length <= maximumMessageWidth) {
+            l = `${l} ${word}`.trim()
+          } else {
+            lines.push(l.padEnd(maximumMessageWidth, ' '));
+            l = `...${word}`;
+          }
+        }
+        lines.push(l.padEnd(maximumMessageWidth, ' '))
+        let cur = line
+        // eslint-disable-next-line
+        this.nvim.call('winwidth', ['.'])
+          .then(winwidth => {
+            for (let i = 0; i < lines.length; i++) {
+              // eslint-disable-next-line
+              this.nvim.call('getline', [cur + i + 1])
+                .then(line => {
+                  const prefixLen = winwidth - line.length - (maximumMessageWidth);
+                  const prefix = ' '.repeat(prefixLen > 0 ? prefixLen : 0);
+                  buffer.setVirtualText(srcId, cur + i, [[prefix + lines[i], highlight]], {}).logError()
+                })
+
+            }
+          })
+        // buffer.setVirtualText(srcId, line, [[prefix + msg, highlight]], {}).logError()
+
+      });
+    }
+  }
+
+  public showVirtualTextOld(diagnostics: ReadonlyArray<Diagnostic>, lnum: number): void {
     let { buffer, config } = this
     if (!config.virtualText) return
     let srcId = this.config.virtualTextSrcId
