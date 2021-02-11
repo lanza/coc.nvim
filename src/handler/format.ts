@@ -83,6 +83,10 @@ export default class FormatHandler {
             let space = opts.insertSpaces ? ' '.repeat(opts.tabSize) : '\t'
             let currIndent = curr.match(/^\s*/)[0]
             let newText = '\n' + currIndent + space
+            nvim.command(`echom \"${curr}\"`)
+            nvim.command(`echom \"${space}\"`)
+            nvim.command(`echom \"${currIndent}\"`)
+            nvim.command(`echom \"${newText}\"`)
             let pos: Position = Position.create(line - 1, pre.length)
             // make sure indent of current line
             if (doc.filetype == 'vim') {
